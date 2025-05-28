@@ -8,7 +8,7 @@
   ESP8266WiFiMulti wifiMulti;
 #endif
 
-#include "secrets.h"
+#include "secrets.h"  // Define ssid_1 y password_1
 
 // Pines del motor paso a paso
 const int IN1 = 14;
@@ -16,11 +16,12 @@ const int IN2 = 27;
 const int IN3 = 26;
 const int IN4 = 25;
 
-// LEDS (opcional)
+// LEDs (opcional)
 const int LED = 12;
 const int LED2 = 13;
 
 const int pasosPorVuelta = 512; // Para 28BYJ-48
+
 int paso[4][4] = {
   {1, 1, 0, 0},
   {0, 1, 1, 0},
@@ -28,7 +29,9 @@ int paso[4][4] = {
   {1, 0, 0, 1}
 };
 
-boolean sentido = true; // true = adelante, false = atrás
+boolean sentido = true;               // Última dirección ejecutada
+volatile bool mover = false;          // Solicitud pendiente
+bool sentidoPendiente = true;         // Dirección a ejecutar
 
 const uint32_t TiempoEsperaWifi = 5000;
 unsigned long timeCurrent = 0;
@@ -37,7 +40,6 @@ unsigned long timeCancellation = 3000;
 
 WiFiServer server(80);
 
-// HTML básico
 const String page = R"====(
 <!DOCTYPE html>
 <html>
@@ -51,6 +53,7 @@ const String page = R"====(
 
 void setup() {
   Serial.begin(115200);
+
   pinMode(IN1, OUTPUT);
   pinMode(IN2, OUTPUT);
   pinMode(IN3, OUTPUT);
@@ -92,7 +95,6 @@ void loop() {
 
         if (letter == '\n') {
           if (lineCurrent.length() == 0) {
-            moverMotor(sentido);
             answerUser(user);
             break;
           } else {
@@ -110,13 +112,22 @@ void loop() {
     user.stop();
     Serial.println("Cliente desconectado");
   }
+
+  // Ejecuta movimiento del motor si hay orden pendiente
+  if (mover) {
+    moverMotor(sentidoPendiente);
+    sentido = sentidoPendiente;
+    mover = false;
+  }
 }
 
 void checkMessage(String message) {
   if (message.indexOf("GET /adelante") >= 0) {
-    sentido = true;
+    sentidoPendiente = true;
+    mover = true;
   } else if (message.indexOf("GET /atras") >= 0) {
-    sentido = false;
+    sentidoPendiente = false;
+    mover = true;
   }
 }
 
@@ -133,7 +144,6 @@ void moverMotor(bool direccion) {
     }
   }
 
-  // Señal visual con LED
   digitalWrite(LED, HIGH);
   delay(300);
   digitalWrite(LED, LOW);
@@ -147,10 +157,28 @@ void answerUser(WiFiClient& user) {
   user.print(page);
   user.print("IP del Cliente: ");
   user.print(user.remoteIP());
-  user.print("<br>Dirección del motor: ");
+  user.print("<br>Última dirección ejecutada: ");
   user.print(sentido ? "Adelante" : "Atrás");
-  user.print("<br><a href='/");
-  user.print(sentido ? "atras" : "adelante");
-  user.print("'>Cambiar dirección y mover</a><br>");
+
+  user.print(R"rawliteral(
+    <br><br>
+    <button onclick="moverAdelante(event)">Mover Adelante</button>
+    <button onclick="moverAtras(event)">Mover Atrás</button>
+
+    <script>
+      function moverAdelante(e) {
+        e.preventDefault();
+        fetch('/adelante', { method: 'GET' })
+          .then(() => console.log('Adelante solicitado'));
+      }
+
+      function moverAtras(e) {
+        e.preventDefault();
+        fetch('/atras', { method: 'GET' })
+          .then(() => console.log('Atrás solicitado'));
+      }
+    </script>
+  )rawliteral");
+
   user.print("</body></html>");
 }
